@@ -17,7 +17,7 @@ Python 기반 미국 증시 상태 텔레그램 알림 스크립트입니다. Wi
 cd C:\path\to\Stock_Market_Status
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
-# 외부 패키지는 필요 없지만, 향후 의존성이 추가되어도 같은 절차를 유지할 수 있습니다.
+# Windows에서 America/New_York 같은 타임존을 쓰기 위해 tzdata를 설치합니다.
 pip install -r requirements.txt
 copy .env.example .env
 ```
@@ -69,3 +69,12 @@ DRY_RUN=false
 ### Fear & Greed 조회 중 HTTP 418이 발생하는 경우
 
 CNN 데이터 엔드포인트가 자동화 요청을 봇으로 판단하면 `HTTP Error 418`을 반환할 수 있습니다. 스크립트는 브라우저와 유사한 헤더를 함께 보내도록 처리했으며, 그래도 CNN 요청이 실패하면 전체 실행을 중단하지 않고 알림 메시지에 Fear & Greed 조회 실패 사유를 표시합니다.
+
+
+### Windows에서 No time zone found with key America/New_York 오류가 발생하는 경우
+
+Windows Python 환경에는 IANA 타임존 데이터가 기본 포함되지 않을 수 있어 `ZoneInfoNotFoundError`가 발생할 수 있습니다. 아래 명령으로 `tzdata`를 설치하세요. 최신 스크립트는 `tzdata`가 없어도 실행이 중단되지 않도록 로컬 타임존으로 대체합니다.
+
+```powershell
+pip install -r requirements.txt
+```

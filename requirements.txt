@@ -1,1 +1,1 @@
-# 외부 Python 패키지가 필요 없습니다. 표준 라이브러리만 사용합니다.
+tzdata>=2024.1; platform_system == "Windows"

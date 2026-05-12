@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import quote, urlencode
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 INDEX_TICKERS = {
@@ -132,6 +132,13 @@ def format_signed(value: float, digits: int = 2) -> str:
     return f"{value:+,.{digits}f}"
 
 
+def get_timezone(timezone_name: str):
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        return datetime.now().astimezone().tzinfo
+
+
 def fetch_quote(name: str, ticker: str) -> MarketQuote:
     url = YAHOO_CHART_URL.format(ticker=quote(ticker, safe=""))
     data = request_json(url, params={"range": "5d", "interval": "1d"})
@@ -198,7 +205,7 @@ def format_timestamp(timestamp: object) -> str | None:
     if numeric_timestamp > 10_000_000_000:
         numeric_timestamp /= 1000
 
-    updated = datetime.fromtimestamp(numeric_timestamp, tz=ZoneInfo("America/New_York"))
+    updated = datetime.fromtimestamp(numeric_timestamp, tz=get_timezone("America/New_York"))
     return updated.strftime("%Y-%m-%d %H:%M %Z")
 
 
@@ -226,7 +233,7 @@ def build_message(
     sectors: list[MarketQuote],
     timezone_name: str,
 ) -> str:
-    now = datetime.now(ZoneInfo(timezone_name))
+    now = datetime.now(get_timezone(timezone_name))
     gain_lines, loss_lines = build_sector_lines(sectors)
 
     if fear_greed.value is None:
