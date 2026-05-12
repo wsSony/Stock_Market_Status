@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlencode
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
@@ -35,7 +36,20 @@ SECTOR_ETFS = {
 CNN_FEAR_GREED_URL = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
 TELEGRAM_SEND_MESSAGE_URL = "https://api.telegram.org/bot{token}/sendMessage"
-USER_AGENT = "StockMarketStatusBot/1.0"
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
+DEFAULT_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+}
+CNN_HEADERS = {
+    "Referer": "https://edition.cnn.com/markets/fear-and-greed",
+    "Origin": "https://edition.cnn.com",
+}
 
 
 @dataclass(frozen=True)
@@ -49,9 +63,10 @@ class MarketQuote:
 
 @dataclass(frozen=True)
 class FearGreedIndex:
-    value: float
+    value: float | None
     rating: str
     updated_at: str | None = None
+    error_message: str | None = None
 
 
 def load_dotenv_file(path: str = ".env") -> None:
@@ -70,7 +85,13 @@ def load_dotenv_file(path: str = ".env") -> None:
         os.environ.setdefault(key, value)
 
 
-def request_json(url: str, *, params: dict[str, str] | None = None, method: str = "GET") -> dict:
+def request_json(
+    url: str,
+    *,
+    params: dict[str, str] | None = None,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+) -> dict:
     encoded_body = None
     request_url = url
 
@@ -79,15 +100,15 @@ def request_json(url: str, *, params: dict[str, str] | None = None, method: str 
     elif params:
         encoded_body = json.dumps(params).encode("utf-8")
 
+    request_headers = DEFAULT_HEADERS | {"Content-Type": "application/json"}
+    if headers:
+        request_headers |= headers
+
     request = Request(
         request_url,
         data=encoded_body,
         method=method,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        },
+        headers=request_headers,
     )
     with urlopen(request, timeout=20) as response:
         return json.loads(response.read().decode("utf-8"))
@@ -143,17 +164,30 @@ def fetch_quotes(tickers: dict[str, str]) -> list[MarketQuote]:
 
 
 def fetch_fear_greed_index() -> FearGreedIndex:
-    data = request_json(CNN_FEAR_GREED_URL)
-    current = data.get("fear_and_greed", {})
+    try:
+        data = request_json(CNN_FEAR_GREED_URL, headers=CNN_HEADERS)
+        current = data.get("fear_and_greed", {})
 
-    value = current.get("score")
-    rating = current.get("rating")
-    updated_at = current.get("timestamp")
+        value = current.get("score")
+        rating = current.get("rating")
+        updated_at = current.get("timestamp")
 
-    if value is None or rating is None:
-        raise RuntimeError("Fear & Greed 지수 응답 형식을 해석하지 못했습니다.")
+        if value is None or rating is None:
+            raise RuntimeError("Fear & Greed 지수 응답 형식을 해석하지 못했습니다.")
 
-    return FearGreedIndex(value=float(value), rating=str(rating), updated_at=format_timestamp(updated_at))
+        return FearGreedIndex(value=float(value), rating=str(rating), updated_at=format_timestamp(updated_at))
+    except HTTPError as error:
+        return FearGreedIndex(
+            value=None,
+            rating="N/A",
+            error_message=f"CNN 요청 실패: HTTP {error.code}",
+        )
+    except (URLError, TimeoutError, RuntimeError, ValueError) as error:
+        return FearGreedIndex(
+            value=None,
+            rating="N/A",
+            error_message=f"CNN 요청 실패: {error}",
+        )
 
 
 def format_timestamp(timestamp: object) -> str | None:
@@ -195,9 +229,13 @@ def build_message(
     now = datetime.now(ZoneInfo(timezone_name))
     gain_lines, loss_lines = build_sector_lines(sectors)
 
-    fear_greed_updated = ""
-    if fear_greed.updated_at:
-        fear_greed_updated = f"\n• 업데이트: {fear_greed.updated_at}"
+    if fear_greed.value is None:
+        fear_greed_line = f"• Fear & Greed: 조회 실패 ({fear_greed.error_message or '알 수 없는 오류'})"
+    else:
+        fear_greed_updated = ""
+        if fear_greed.updated_at:
+            fear_greed_updated = f"\n• 업데이트: {fear_greed.updated_at}"
+        fear_greed_line = f"• Fear & Greed: {fear_greed.value:.0f} ({fear_greed.rating}){fear_greed_updated}"
 
     return "\n".join(
         [
@@ -208,7 +246,7 @@ def build_message(
             "",
             "🌡 변동성/심리",
             build_quote_line(vix),
-            f"• Fear & Greed: {fear_greed.value:.0f} ({fear_greed.rating}){fear_greed_updated}",
+            fear_greed_line,
             "",
             "📈 섹터 상승 Top 5",
             *gain_lines,
